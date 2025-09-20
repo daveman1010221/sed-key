@@ -26,4 +26,9 @@ pub enum Command {
         /// Optional key file or '-' for stdin; if omitted, use env
         key: Option<String>,
     },
+    /// Query lock state without changing it
+    Status {
+        /// Device path, e.g. /dev/nvme0n1
+        device: String,
+    },
 }

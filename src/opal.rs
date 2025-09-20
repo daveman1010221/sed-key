@@ -100,3 +100,47 @@ pub fn lock_device(dev: &str, password: &str) -> Result<()> {
 
     Ok(())
 }
+
+/// Probe lock state without a password.
+/// Returns Ok(true) if the drive is locked, Ok(false) if unlocked.
+pub fn device_locked(dev: &str) -> Result<bool> {
+    let f = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("open {}: {}", dev, e))?;
+    let fd = f.as_raw_fd();
+
+    // Build a minimal session (zero key length)
+    let mut sess = opal_session_info::default();
+    sess.sum = 0;
+    sess.who = opal_user::OPAL_ADMIN1.0;
+    sess.opal_key.lr = 0; // global LR
+    sess.opal_key.key_type = OPAL_INCLUDED;
+    sess.opal_key.key_len = 0;
+
+    // Ask for RW (unlock) without a key — if it fails with EIO/EINVAL, it's locked
+    let mut op = opal_lock_unlock::default();
+    op.session = sess;
+    op.l_state = opal_lock_state::OPAL_RW.0; // request RW access
+    op.flags = 0;
+
+    match unsafe { ioc_opal_lock_unlock(fd, &op) } {
+        Ok(_) => Ok(false), // ioctl succeeded → we’re allowed RW → unlocked
+        Err(errno) => {
+            let code: i32 = errno as i32;
+            if code == libc::EIO || code == libc::EINVAL {
+                // common kernel responses when locked
+                Ok(true)
+            } else if code == libc::ENOTTY {
+                Err(anyhow!("{} is not OPAL capable", dev))
+            } else {
+                Err(anyhow!(
+                    "lock-state probe ioctl failed on {} with errno {:?}",
+                    dev,
+                    errno
+                ))
+            }
+        }
+    }
+}
