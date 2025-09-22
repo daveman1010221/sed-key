@@ -85,6 +85,30 @@ MIRI_SED_LOCKED=1 cargo miri run -- status /dev/nvme0n1
 
 This lets the parser and property-based tests run without touching real drives.
 
+## Building From Source
+
+### Using Cargo (standard build)
+
+If you have Rust installed, you can build and run directly:
+
+```bash
+git clone https://github.com/daveman1010221/sed-key.git
+cd sed-key
+cargo build --release
+```
+
+### Using Nix (reproducible build)
+
+If you have Nix installed with flakes enabled:
+
+```bash
+git clone https://github.com/daveman1010221/sed-key.git
+cd sed-key
+nix build .#default
+```
+
+This Nix build performs a fully offline, reproducible release build of `sed-key`.
+
 ## License
 
 Licensed under MIT.
