@@ -1,8 +1,10 @@
-## [0.1.0] - 2025-09-22
+## [unreleased]
 
 ### ⚙️ Miscellaneous Tasks
 
 - *(release)* Update CHANGELOG for 0.1.0
+- *(docs)* Update changelog for 0.1.0 release
+- *(release)* Update the comments for docs.rs
 ## [0.1.0] - 2025-09-22
 
 ### 🚀 Features
