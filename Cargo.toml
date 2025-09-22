@@ -2,6 +2,14 @@
 name = "sed-key"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Tool + library for controlling NVMe SED/OPAL lock states on Linux"
+repository = "https://github.com/daveman1010221/sed-key"
+homepage = "https://github.com/daveman1010221/sed-key"
+documentation = "https://docs.rs/sed-key"
+readme = "README.md"
+keywords = ["nvme", "opal", "sed", "security"]
+categories = ["command-line-utilities", "filesystem", "hardware-support"]
 
 [dependencies]
 anyhow = "1"
