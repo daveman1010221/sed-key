@@ -385,6 +385,7 @@ dependencies = [
  "clap",
  "libc",
  "linux-sed-opal-sys",
+ "nix",
 ]
 
 [[package]]
