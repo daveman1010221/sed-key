@@ -1,5 +1,10 @@
 ## [0.1.0] - 2025-09-22
 
+### ⚙️ Miscellaneous Tasks
+
+- *(release)* Update CHANGELOG for 0.1.0
+## [0.1.0] - 2025-09-22
+
 ### 🚀 Features
 
 - *(status)* Add lock status check to avoid using nvme sed at all
