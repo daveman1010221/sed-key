@@ -21,13 +21,8 @@ fn main() -> Result<()> {
             actions::do_lock(device, key)?;
         }
         Command::Status { device } => {
-            // query lock state without changing it
-            let locked = opal::device_locked(&device)?;
-            if locked {
-                println!("{device}: Locked");
-            } else {
-                println!("{device}: Unlocked");
-            }
+            // delegate to actions.rs helper
+            actions::do_status(device)?;
         }
     }
     Ok(())

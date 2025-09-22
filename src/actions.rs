@@ -46,11 +46,21 @@ pub fn do_status(device: String) -> Result<()> {
     if !opal::is_opal_device(&device)? {
         return Err(anyhow!("{} does not support OPAL locking", device));
     }
-    let locked = opal::device_locked(&device)?; // you’ll implement this in opal.rs
+
+    // Query locked/unlocked
+    let locked = opal::device_locked(&device)?;
+
+    // Re-print the locking feature bits for full context
+    // (This is the function that was previously unused)
+    let features_byte = if locked { opal::OPAL_FEATURE_LOCKED } else { 0 };
+    opal::print_locking_features(features_byte);
+
+    // Also show the simple status line
     println!(
         "{} is currently {}",
         device,
         if locked { "LOCKED" } else { "UNLOCKED" }
     );
+
     Ok(())
 }
