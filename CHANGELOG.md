@@ -1,3 +1,8 @@
+## [0.1.2] - 2025-10-14
+
+### 🐛 Bug Fixes
+
+- *(opal)* Keep file handle alive during ioctl to prevent EBADF
 ## [unreleased]
 
 ### ⚙️ Miscellaneous Tasks
