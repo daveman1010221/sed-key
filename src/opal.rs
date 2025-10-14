@@ -89,17 +89,26 @@ fn build_session_admin1_global(pw: &[u8]) -> Result<opal_session_info> {
 /// Called by [`unlock_device`] and [`lock_device`] with the appropriate
 /// [`opal_lock_state`] (RW = unlock, LK = lock).
 fn do_lock(dev: &str, password: &str, state: opal_lock_state) -> Result<()> {
-    let fd = File::options().read(true).write(true).open(dev)
-        .map_err(|e| anyhow!("open {}: {}", dev, e))?
-        .as_raw_fd();
+    // Keep File in scope until after ioctl; don't chain `.as_raw_fd()` directly.
+    let f = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("open {}: {}", dev, e))?;
+    let fd = f.as_raw_fd();
+
     let sess = build_session_admin1_global(password.as_bytes())?;
     let mut op = opal_lock_unlock::default();
     op.session = sess;
     op.l_state = state.0;
 
-    unsafe { ioc_opal_lock_unlock(fd, &op) }
-        .map_err(|e| anyhow!("ioctl failed with {:?}", e))?;
-    Ok(())
+    // Perform ioctl while the file descriptor is still valid
+    let res = unsafe { ioc_opal_lock_unlock(fd, &op) }
+        .map(|_| ()) // discard return value, just signal success
+        .map_err(|e| anyhow!("ioctl failed with {:?}", e));
+
+    drop(f); // explicitly close after ioctl
+    res
 }
 
 /// Unlock a device by sending the OPAL_LOCK_UNLOCK ioctl with RW state.
