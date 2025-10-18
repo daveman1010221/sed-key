@@ -1,5 +1,5 @@
 use crate::opal;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::io::{self, Read};
 
@@ -7,19 +7,17 @@ use std::io::{self, Read};
 fn read_key_arg(key_arg: Option<String>) -> Result<String> {
     if let Some(arg) = key_arg {
         if arg == "-" {
-            // Read *all* of stdin (not just one line)
             let mut buf = String::new();
             io::stdin().read_to_string(&mut buf)?;
-            return Ok(buf.trim_end_matches(|c| c == '\n' || c == '\r').to_string());
+            return Ok(buf.trim_end_matches(['\n', '\r']).to_string());
         } else {
-            // Treat as filename
             let s = fs::read_to_string(&arg)?;
-            return Ok(s.trim_end_matches(|c| c == '\n' || c == '\r').to_string());
+            return Ok(s.trim_end_matches(['\n', '\r']).to_string());
         }
     }
 
     if let Ok(k) = std::env::var("SED_KEY") {
-        return Ok(k.trim_end_matches(|c| c == '\n' || c == '\r').to_string());
+        return Ok(k.trim_end_matches(['\n', '\r']).to_string());
     }
 
     Err(anyhow!("No key provided (stdin, file, or SED_KEY env var)"))
@@ -47,15 +45,12 @@ pub fn do_status(device: String) -> Result<()> {
         return Err(anyhow!("{} does not support OPAL locking", device));
     }
 
-    // Query locked/unlocked
+    // Get discovery data and parse actual feature flags
     let locked = opal::device_locked(&device)?;
+    let features = opal::get_locking_features(&device)?; // new helper (see below)
 
-    // Re-print the locking feature bits for full context
-    // (This is the function that was previously unused)
-    let features_byte = if locked { opal::OPAL_FEATURE_LOCKED } else { 0 };
-    opal::print_locking_features(features_byte);
+    opal::print_locking_features(features);
 
-    // Also show the simple status line
     println!(
         "{} is currently {}",
         device,
