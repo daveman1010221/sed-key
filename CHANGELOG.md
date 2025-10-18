@@ -1,3 +1,21 @@
+## [0.1.3] - 2025-10-18
+
+### 🚀 Features
+
+- *(opal)* Introduce secure key handling and structured feature parsing
+
+### 🚜 Refactor
+
+- *(actions)* Simplify key input handling and integrate feature display
+
+### 🧪 Testing
+
+- *(proptest)* Add regression corpus for deterministic replay
+
+### ⚙️ Miscellaneous Tasks
+
+- *(gitignore)* Ignore local authorized_keys file
+- *(nix)* Bump nixpkgs and crate version in flake
 ## [0.1.2] - 2025-10-14
 
 ### 🐛 Bug Fixes
