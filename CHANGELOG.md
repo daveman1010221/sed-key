@@ -1,3 +1,18 @@
+## [0.1.4] - 2025-10-20
+
+### 🚜 Refactor
+
+- *(core)* Merge actions module into lib and introduce backend abstraction
+
+### 🧪 Testing
+
+- *(args)* Add unit tests for Clap parsing
+- *(cli)* Add binary smoke tests with assert_cmd
+- *(lib)* Exercise do_* APIs against mock backend
+- *(args)* Add proptests to ensure parser never panics
+- *(lib)* Add proptests for unlock/lock/status semantics
+- *(hardware)* Add feature-gated real device smoke tests (ignored)
+- *(proptest)* Add regression corpus for test_lib_proptest
 ## [0.1.3] - 2025-10-18
 
 ### 🚀 Features
