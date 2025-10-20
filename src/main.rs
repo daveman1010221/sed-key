@@ -18,12 +18,11 @@
 #![doc = include_str!("../README.md")]
 
 mod args;
-mod opal;
-mod actions;
 
 use anyhow::Result;
 use args::{Cli, Command};
-use clap::{Parser, CommandFactory};
+use clap::{CommandFactory, Parser};
+use sed_key::{do_lock, do_status, do_unlock};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -34,14 +33,14 @@ fn main() -> Result<()> {
             println!();
         }
         Command::Unlock { device, key } => {
-            actions::do_unlock(device, key)?;
+            do_unlock(device, key)?;
         }
         Command::Lock { device, key } => {
-            actions::do_lock(device, key)?;
+            do_lock(device, key)?;
         }
         Command::Status { device } => {
             // delegate to actions.rs helper
-            actions::do_status(device)?;
+            do_status(device)?;
         }
     }
     Ok(())

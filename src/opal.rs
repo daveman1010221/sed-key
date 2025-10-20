@@ -739,5 +739,15 @@ mod tests {
                 prop_assert!(res.is_ok());
             }
         }
+
+        #[test]
+        fn no_conflicting_locking_bits(buf in proptest::collection::vec(any::<u8>(), 64..4096)) {
+            let _ = super::parse_locking_feature(&buf).map(|bits| {
+                // LOCKED and ENABLED can’t logically conflict
+                prop_assert!(!(bits & super::OPAL_FEATURE_LOCKED != 0 &&
+                               bits & super::OPAL_FEATURE_LOCKING_ENABLED == 0));
+                Ok(())
+            });
+        }
     }
 }
