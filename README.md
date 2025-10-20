@@ -2,13 +2,18 @@
 
 [![Crates.io](https://img.shields.io/crates/v/sed-key.svg)](https://crates.io/crates/sed-key)
 
-`sed-key` is a Rust command-line tool for locking, unlocking, and querying the lock state of [NVMe Self-Encrypting Drives (SED)](https://wiki.archlinux.org/title/Self-encrypting_drives) using the TCG OPAL protocol under Linux. Its scope is intentionally limited and is intended for use in places like early stage boot environments. sed-key is designed to accept a key as a CLI argument.
+`sed-key` is a Rust command-line tool **and reusable library** for locking, unlocking, and querying the lock state of [NVMe Self-Encrypting Drives (SED)](https://wiki.archlinux.org/title/Self-encrypting_drives) using the TCG OPAL protocol under Linux.
+
+It’s intentionally minimal — ideal for early-boot or recovery environments — and supports both direct CLI use and programmatic invocation from other Rust code.
 
 It wraps the Linux `ioctl`s for OPAL discovery and lock/unlock, providing:
 
 - **Discovery**: Check whether a drive supports OPAL/SED and parse the locking feature descriptor.
 - **Locking/Unlocking**: Send the `OPAL_LOCK_UNLOCK` command with your Admin1 password.
 - **CLI**: A `sed-key` binary to view lock status or unlock drives interactively.
+- **Library API:** Call `do_lock`, `do_unlock`, or `do_status` directly from your own code.
+- **Mock Backend:** Built-in simulator for hardware-free testing.
+- **Feature-Gated Real Hardware Tests:** Enable `--features real-hardware` for integration on test drives.
 
 ---
 
@@ -76,6 +81,29 @@ fi
 
 ## Testing
 
+All tests run safely without touching hardware by default:
+
+```bash
+cargo test
+```
+
+Property-based tests and regression corpus ensure deterministic runs.
+
+For real hardware tests, explicitly enable:
+
+```bash
+cargo test --features real-hardware -- --ignored
+```
+
+Required environment:
+
+```bash
+export SED_KEY_TEST_DEV=/dev/nvme1
+export SED_KEY_TEST_PW=mysecret
+```
+
+Never run these on a mounted or production drive.
+
 When running under Miri or in CI, hardware IOCTLs are replaced by a fabricated discovery page.
 Example:
 
@@ -108,6 +136,21 @@ nix build .#default
 ```
 
 This Nix build performs a fully offline, reproducible release build of `sed-key`.
+
+## 🧩 Library Integration Example
+
+```rust
+use sed_key::{do_status, do_unlock, use_mock_backend};
+
+fn main() -> anyhow::Result<()> {
+    use_mock_backend();
+    do_unlock("/dev/nvme0".into(), Some("pw".into()))?;
+    do_status("/dev/nvme0".into())?;
+    Ok(())
+}
+```
+
+This allows scripting or testing drive control directly from Rust code.
 
 ## License
 
