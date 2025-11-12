@@ -1,3 +1,20 @@
+## [0.1.5] - 2025-11-12
+
+### 🚀 Features
+
+- *(flake)* Integrate rust-overlay and improve reproducible Nix build
+
+### 🚜 Refactor
+
+- *(ioctl,opal)* Integrate in-tree bindings and improve IOCTL error handling
+
+### 📚 Documentation
+
+- *(readme)* Update for v0.1.4 backend abstraction and mock testing
+
+### 🧪 Testing
+
+- *(cli,args)* Modernize macros and fix proptest configuration
 ## [0.1.4] - 2025-10-20
 
 ### 🚜 Refactor
