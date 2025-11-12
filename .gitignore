@@ -2,3 +2,4 @@
 result
 .direnv/
 authorized_keys
+.cargo/
