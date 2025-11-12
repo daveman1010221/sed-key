@@ -1,5 +1,9 @@
+use crate::ioctl::{
+    OPAL_KEY_MAX, OpalLockState, OpalUser, ioc_opal_lock_unlock, opal_discovery, opal_key,
+    opal_lock_unlock, opal_session_info,
+};
 use anyhow::{Result, anyhow};
-use linux_sed_opal_sys::*;
+use nix::errno::Errno;
 use std::fs::File;
 
 use std::os::fd::AsRawFd;
@@ -17,8 +21,8 @@ use zeroize::Zeroize;
 
 // ───── Constants ──────────────────────────────────────────────────────────────
 #[cfg(not(miri))]
-pub const IOC_OPAL_DISCOVERY: libc::c_ulong =
-    request_code_write!('p', 239, std::mem::size_of::<opal_discovery>());
+pub const IOC_OPAL_DISCOVERY: i32 =
+    request_code_write!('p', 239, std::mem::size_of::<opal_discovery>()) as i32;
 
 pub const DISCOVERY_BUF_SIZE: usize = 4096;
 pub const DISCOVERY_HEADER_LEN: usize = 48;
@@ -42,6 +46,30 @@ struct OpalKeyFixed {
     key_type: u8,
     key_len: u8,
     key: [u8; OPAL_KEY_MAX as usize],
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OpalIoctlError {
+    #[error("{what} not supported by this kernel")]
+    Unsupported { what: &'static str },
+    #[error("{what} failed: {errno}")]
+    Other { what: &'static str, errno: Errno },
+}
+
+#[inline]
+fn map_ioctl_err(errno: Errno, what: &'static str) -> anyhow::Error {
+    match errno {
+        Errno::ENOTTY | Errno::EINVAL => OpalIoctlError::Unsupported { what }.into(),
+        other => OpalIoctlError::Other { what, errno: other }.into(),
+    }
+}
+
+fn is_unsupported(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| cause.is::<OpalIoctlError>())
+        && matches!(
+            e.downcast_ref::<OpalIoctlError>(),
+            Some(OpalIoctlError::Unsupported { .. })
+        )
 }
 
 impl Default for OpalKeyFixed {
@@ -111,8 +139,14 @@ impl OpalKeyFixed {
 #[cfg(not(miri))]
 #[inline]
 fn ioctl_opal_discovery(fd: c_int, arg: *mut opal_discovery) -> nix::Result<c_int> {
-    // Safety: caller must ensure `fd` is valid and `arg` points to a valid opal_discovery
-    unsafe { nix::errno::Errno::result(nix::libc::ioctl(fd, IOC_OPAL_DISCOVERY, arg)) }
+    use std::convert::TryInto;
+    unsafe {
+        nix::errno::Errno::result(nix::libc::ioctl(
+            fd,
+            IOC_OPAL_DISCOVERY.try_into().unwrap(),
+            arg,
+        ))
+    }
 }
 
 #[cfg(miri)]
@@ -130,12 +164,7 @@ fn ioctl_opal_discovery(_fd: i32, _arg: *mut opal_discovery) -> nix::Result<i32>
 pub fn is_opal_device(dev: &str) -> Result<bool> {
     match device_locked(dev) {
         Ok(_) => Ok(true),
-        Err(e)
-            if e.to_string()
-                .contains("does not support OPAL/SED functionality") =>
-        {
-            Ok(false)
-        }
+        Err(e) if is_unsupported(&e) => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -167,10 +196,11 @@ fn build_session_admin1_global(pw: &[u8]) -> Result<opal_session_info> {
         .with_password(pw);
 
     let sess = opal_session_info {
-        who: opal_user::OPAL_ADMIN1.0,
-        opal_key: fixed.into(), // moves the bytes; wrapper will zeroize on drop
+        who: OpalUser::Admin1 as u32,
+        opal_key: fixed.into(),
         ..Default::default()
     };
+
     Ok(sess)
 }
 
@@ -178,7 +208,7 @@ fn build_session_admin1_global(pw: &[u8]) -> Result<opal_session_info> {
 ///
 /// Called by [`unlock_device`] and [`lock_device`] with the appropriate
 /// [`opal_lock_state`] (RW = unlock, LK = lock).
-fn do_lock(dev: &str, password: &str, state: opal_lock_state) -> Result<()> {
+fn do_lock(dev: &str, password: &str, state: OpalLockState) -> Result<()> {
     // Keep File open during ioctl
     let file = File::options()
         .read(true)
@@ -193,7 +223,7 @@ fn do_lock(dev: &str, password: &str, state: opal_lock_state) -> Result<()> {
     // Prepare ioctl struct
     let mut op = opal_lock_unlock {
         session: sess,
-        l_state: state.0,
+        l_state: state as u32,
         ..Default::default()
     };
 
@@ -204,7 +234,7 @@ fn do_lock(dev: &str, password: &str, state: opal_lock_state) -> Result<()> {
             anyhow!(
                 "OPAL_LOCK_UNLOCK ioctl failed on {} (state={:?}): {:?}",
                 dev,
-                state.0,
+                state as u32,
                 e
             )
         });
@@ -219,7 +249,7 @@ fn do_lock(dev: &str, password: &str, state: opal_lock_state) -> Result<()> {
 ///
 /// Verifies the device is actually unlocked afterward.
 pub fn unlock_device(dev: &str, pw: &str) -> Result<()> {
-    do_lock(dev, pw, opal_lock_state::OPAL_RW)?;
+    do_lock(dev, pw, OpalLockState::Rw)?;
 
     // Post-condition: verify unlock took effect
     match device_locked(dev) {
@@ -239,7 +269,7 @@ pub fn unlock_device(dev: &str, pw: &str) -> Result<()> {
 ///
 /// Verifies the device is actually locked afterward.
 pub fn lock_device(dev: &str, pw: &str) -> Result<()> {
-    do_lock(dev, pw, opal_lock_state::OPAL_LK)?;
+    do_lock(dev, pw, OpalLockState::Lk)?;
 
     // Post-condition: verify lock took effect
     match device_locked(dev) {
@@ -255,6 +285,17 @@ pub fn lock_device(dev: &str, pw: &str) -> Result<()> {
     }
 }
 
+#[allow(unused_macros)]
+#[cfg(feature = "trace-opal")]
+macro_rules! trace_opal {
+    ($($t:tt)*) => { eprintln!($($t)*); };
+}
+#[allow(unused_macros)]
+#[cfg(not(feature = "trace-opal"))]
+macro_rules! trace_opal {
+    ($($t:tt)*) => {};
+}
+
 // ───── Discovery Path ────────────────────────────────────────────────────────
 
 // ───── Public API ────────────────────────────────────────────────────────────
@@ -267,15 +308,14 @@ pub fn lock_device(dev: &str, pw: &str) -> Result<()> {
 #[cfg(all(not(test), not(miri)))]
 pub fn device_locked(dev: &str) -> Result<bool> {
     let candidates = candidate_nodes(dev);
-    let mut last_errs: Vec<(String, nix::errno::Errno)> = Vec::new();
-    let mut saw_enotty = false;
+    let mut last_errs: Vec<(String, Errno)> = Vec::new();
 
     for node in candidates {
         // Keep File in scope while using its fd
         let file = match File::open(&node) {
             Ok(f) => f,
             Err(e) => {
-                let errno = nix::errno::Errno::from_i32(e.raw_os_error().unwrap_or(libc::EINVAL));
+                let errno = Errno::from_i32(e.raw_os_error().unwrap_or(libc::EINVAL));
                 last_errs.push((node.clone(), errno));
                 continue;
             }
@@ -288,11 +328,10 @@ pub fn device_locked(dev: &str) -> Result<bool> {
             size: buf.len() as u64,
         };
 
-        // Safe wrapper already checks errno
         match ioctl_opal_discovery(fd, &mut disc) {
             Ok(_) => {
                 #[cfg(debug_assertions)]
-                eprintln!(
+                trace_opal!(
                     "Discovery buffer (first 256 bytes): {:02x?}",
                     &buf[..256.min(buf.len())]
                 );
@@ -301,40 +340,27 @@ pub fn device_locked(dev: &str) -> Result<bool> {
                 return Ok((features & OPAL_FEATURE_LOCKED) != 0);
             }
             Err(errno) => {
-                if errno == nix::errno::Errno::ENOTTY {
-                    saw_enotty = true;
-                }
                 last_errs.push((node.clone(), errno));
             }
         }
     }
 
-    // If all probes failed with ENOTTY, it’s not an OPAL device
-    if saw_enotty
+    // All probed nodes said "inappropriate ioctl" or "invalid" -> treat as unsupported.
+    if !last_errs.is_empty()
         && last_errs
             .iter()
-            .all(|(_, e)| *e == nix::errno::Errno::ENOTTY)
+            .all(|(_, e)| *e == Errno::ENOTTY || *e == Errno::EINVAL)
     {
-        return Err(anyhow!(
-            "Device does not support OPAL/SED functionality. Tried nodes: {}",
-            last_errs
-                .iter()
-                .map(|(n, _)| n.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        return Err(map_ioctl_err(Errno::ENOTTY, "OPAL discovery"));
     }
 
+    // Otherwise, surface the collected reasons.
     let why = last_errs
         .iter()
-        .map(|(n, e)| format!("{}: {}", n, e))
+        .map(|(n, e)| format!("{n}: {e}"))
         .collect::<Vec<_>>()
         .join(", ");
-
-    Err(anyhow!(
-        "Discovery ioctl failed for all candidates ({})",
-        why
-    ))
+    Err(anyhow!("Discovery ioctl failed for all candidates ({why})"))
 }
 
 /// Parse the TCG discovery buffer to locate the Locking Feature Descriptor.
@@ -374,14 +400,14 @@ fn parse_locking_feature(buf: &[u8]) -> Result<u16> {
                 if length == 1 {
                     let flags = buf[payload] as u16;
                     #[cfg(debug_assertions)]
-                    eprintln!("Locking feature flags=0x{:04x}", flags);
+                    trace_opal!("Locking feature flags=0x{:04x}", flags);
                     return Ok(flags);
                 }
                 return Err(anyhow!("Locking feature payload too short"));
             }
             let flags = u16::from_le_bytes([buf[payload], buf[payload + 1]]);
             #[cfg(debug_assertions)]
-            eprintln!("Locking feature flags=0x{:04x}", flags);
+            trace_opal!("Locking feature flags=0x{:04x}", flags);
             return Ok(flags);
         }
 
@@ -459,7 +485,7 @@ pub fn get_locking_features(dev: &str) -> Result<u16> {
         size: buf.len() as u64,
     };
 
-    ioctl_opal_discovery(fd, &mut disc).map_err(|e| anyhow!("ioctl failed: {}", e))?;
+    ioctl_opal_discovery(fd, &mut disc).map_err(|e| map_ioctl_err(e, "OPAL discovery"))?;
 
     parse_locking_feature(&buf)
 }
@@ -674,7 +700,7 @@ mod tests {
         ) {
             let sess = super::build_session_admin1_global(&pw).unwrap();
 
-            prop_assert_eq!(sess.who, linux_sed_opal_sys::opal_user::OPAL_ADMIN1.0);
+            prop_assert_eq!(sess.who, OpalUser::Admin1 as u32);
             prop_assert_eq!(sess.opal_key.key_len, pw.len() as u8);
             prop_assert_eq!(sess.opal_key.key_type, super::OPAL_INCLUDED);
         }

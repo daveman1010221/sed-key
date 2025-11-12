@@ -1,6 +1,8 @@
 //! sed-key library entry point.
 
 pub mod args;
+pub mod bindings;
+pub mod ioctl;
 pub mod opal;
 
 use anyhow::{Result, anyhow};
