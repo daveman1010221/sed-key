@@ -1,6 +1,7 @@
 use crate::ioctl::{
-    OPAL_KEY_MAX, OpalLockState, OpalUser, ioc_opal_lock_unlock, opal_discovery, opal_key,
-    opal_lock_unlock, opal_session_info,
+    OPAL_KEY_MAX, OpalLockState, OpalUser, ioc_opal_activate_lsp, ioc_opal_lock_unlock,
+    ioc_opal_take_ownership, opal_discovery, opal_key, opal_lock_unlock, opal_lr_act,
+    opal_session_info, ioc_opal_lr_setup, opal_user_lr_setup,
 };
 use anyhow::{Result, anyhow};
 use nix::errno::Errno;
@@ -37,6 +38,30 @@ pub const OPAL_FEATURE_MBR_ENABLED: u16 = 0x0010;
 pub const OPAL_FEATURE_MBR_DONE: u16 = 0x0020;
 
 pub const OPAL_INCLUDED: u8 = 0; // key_type: key bytes included in opal_key.key
+
+const OPAL_METHOD_STATUS: &[&str] = &[
+    "Success", "Not Authorized", "Unknown Error", "SP Busy", "SP Failed",
+    "SP Disabled", "SP Frozen", "No Sessions Available", "Uniqueness Conflict",
+    "Insufficient Space", "Insufficient Rows", "Invalid Function",
+    "Invalid Parameter", "Invalid Reference", "Unknown Error",
+    "TPER Malfunction", "Transaction Failure", "Response Overflow",
+    "Authority Locked Out",
+];
+
+fn check_opal_rc(rc: i32, what: &'static str) -> Result<()> {
+    if rc == 0 {
+        return Ok(());
+    }
+    let msg = if rc == 0x3f {
+        "Failed"
+    } else {
+        OPAL_METHOD_STATUS
+            .get(rc as usize)
+            .copied()
+            .unwrap_or("Unknown Error")
+    };
+    Err(anyhow!("{what} rejected by drive: {msg} (code {rc})"))
+}
 
 /// Safe fixed-size representation of an OPAL key buffer.
 /// Ensures we always have a real `[u8; OPAL_KEY_MAX]` to write into.
@@ -245,8 +270,145 @@ fn do_lock(dev: &str, password: &str, state: OpalLockState) -> Result<()> {
     res
 }
 
+/// Take ownership of an Opal drive by sending the OPAL_TAKE_OWNERSHIP
+/// ioctl with the new SID password. Only valid on a drive that hasn't
+/// been owned yet (SID == MSID) — e.g. factory state or freshly
+/// PSID-reverted.
+fn do_take_ownership(dev: &str, new_password: &str) -> Result<()> {
+    if new_password.is_empty() {
+        return Err(anyhow!("empty password"));
+    }
+    let max = OPAL_KEY_MAX as usize;
+    if new_password.len() > max {
+        return Err(anyhow!(
+            "password length ({}) exceeds OPAL_KEY_MAX ({}) — refusing to truncate",
+            new_password.len(),
+            OPAL_KEY_MAX
+        ));
+    }
+
+    // Keep File open during ioctl
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("failed to open {}: {}", dev, e))?;
+    let fd = file.as_raw_fd();
+
+    // Build key material — take-ownership takes a bare opal_key (the new
+    // SID), not a full session; no `who`/Admin1 needed here.
+    let fixed = OpalKeyFixed::default()
+        .with_key_type(OPAL_INCLUDED)
+        .with_lr(0)
+        .with_password(new_password.as_bytes());
+
+    let mut key: opal_key = fixed.into();
+
+    let res = unsafe { ioc_opal_take_ownership(fd, &key) }
+        .map_err(|e| map_ioctl_err(e, "OPAL_TAKE_OWNERSHIP"))
+        .and_then(|rc| check_opal_rc(rc, "OPAL_TAKE_OWNERSHIP"));
+
+    // Scrub key material before returning
+    key.key[..key.key_len as usize].zeroize();
+
+    res
+}
+
+/// Public wrapper: take ownership of `dev`, setting its SID to `new_password`.
+pub fn take_ownership(dev: &str, new_password: &str) -> Result<()> {
+    do_take_ownership(dev, new_password)
+}
+
+/// Activate the Locking SP's global locking range, using the SID set by
+/// a prior take_ownership call. Required before Locking Enabled flips to
+/// yes and locking-range operations (lock/unlock) become meaningful.
+fn do_activate_lsp(dev: &str, sid_password: &str) -> Result<()> {
+    if sid_password.is_empty() {
+        return Err(anyhow!("empty password"));
+    }
+    let max = OPAL_KEY_MAX as usize;
+    if sid_password.len() > max {
+        return Err(anyhow!(
+            "password length ({}) exceeds OPAL_KEY_MAX ({}) — refusing to truncate",
+            sid_password.len(),
+            OPAL_KEY_MAX
+        ));
+    }
+
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("failed to open {}: {}", dev, e))?;
+    let fd = file.as_raw_fd();
+
+    let fixed = OpalKeyFixed::default()
+        .with_key_type(OPAL_INCLUDED)
+        .with_lr(0)
+        .with_password(sid_password.as_bytes());
+
+    let key: opal_key = fixed.into();
+
+    let mut act = opal_lr_act {
+        key,
+        sum: 0,
+        num_lrs: 0,
+        lr: [0u8; 9],
+        align: [0u8; 2],
+    };
+
+    let res = unsafe { ioc_opal_activate_lsp(fd, &act) }
+        .map_err(|e| map_ioctl_err(e, "OPAL_ACTIVATE_LSP"))
+        .and_then(|rc| check_opal_rc(rc, "OPAL_ACTIVATE_LSP"));
+
+    act.key.key[..act.key.key_len as usize].zeroize();
+
+    res
+}
+
+/// Public wrapper: activate the global locking range on `dev` using the
+/// SID password set by a prior take_ownership call.
 /// Unlock a device by sending the OPAL_LOCK_UNLOCK ioctl with RW state.
-///
+pub fn activate_lsp(dev: &str, sid_password: &str) -> Result<()> {
+    do_activate_lsp(dev, sid_password)
+}
+
+/// Set up the global locking range's read/write-lock-enabled flags.
+/// Required after activate_lsp for Level-0 discovery's "Locking Enabled"
+/// to actually reflect true, and for lock/unlock operations to be
+/// meaningful. Authenticates as Admin1 -- may need a different credential
+/// than the SID used for take_ownership/activate_lsp; test empirically.
+fn do_lr_setup(dev: &str, admin1_password: &str) -> Result<()> {
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("failed to open {}: {}", dev, e))?;
+    let fd = file.as_raw_fd();
+
+    let sess = build_session_admin1_global(admin1_password.as_bytes())?;
+
+    let mut setup = opal_user_lr_setup {
+        range_start: 0,
+        range_length: 0, // 0 = entire drive for the global range
+        RLE: 1,          // Read Lock Enabled
+        WLE: 1,          // Write Lock Enabled
+        session: sess,
+    };
+
+    let res = unsafe { ioc_opal_lr_setup(fd, &setup) }
+        .map_err(|e| map_ioctl_err(e, "OPAL_LR_SETUP"))
+        .and_then(|rc| check_opal_rc(rc, "OPAL_LR_SETUP"));
+
+    setup.session.opal_key.key[..setup.session.opal_key.key_len as usize].zeroize();
+
+    res
+}
+
+pub fn lr_setup(dev: &str, admin1_password: &str) -> Result<()> {
+    do_lr_setup(dev, admin1_password)
+}
+
 /// Verifies the device is actually unlocked afterward.
 pub fn unlock_device(dev: &str, pw: &str) -> Result<()> {
     do_lock(dev, pw, OpalLockState::Rw)?;

@@ -31,4 +31,25 @@ pub enum Command {
         /// Device path, e.g. /dev/nvme0n1
         device: String,
     },
+    /// Take ownership of an unowned/reverted drive, setting a new SID
+    Initialize {
+        /// Device path
+        device: String,
+        /// New key: file path, '-' for stdin, or literal string; if omitted, use env
+        key: Option<String>,
+    },
+    /// Activate the Locking SP's global range using the SID set by `initialize`
+    Activate {
+        /// Device path
+        device: String,
+        /// SID password: file path, '-' for stdin, or literal string; if omitted, use env
+        key: Option<String>,
+    },
+    /// Set up the global locking range's RLE/WLE flags (after activate)
+    LrSetup {
+        /// Device path
+        device: String,
+        /// Admin1 password: file path, '-' for stdin, or literal string; if omitted, use env
+        key: Option<String>,
+    },
 }

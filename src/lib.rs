@@ -24,6 +24,9 @@ trait OpalBackend: Sync {
     fn device_locked(&self, dev: &str) -> Result<bool>;
     fn get_locking_features(&self, dev: &str) -> Result<u16>;
     fn print_locking_features(&self, f: u16);
+    fn take_ownership_device(&self, dev: &str, new_pw: &str) -> Result<()>;
+    fn activate_lsp_device(&self, dev: &str, sid_pw: &str) -> Result<()>;
+    fn lr_setup_device(&self, dev: &str, admin1_pw: &str) -> Result<()>;
 }
 
 struct RealBackend;
@@ -46,6 +49,15 @@ impl OpalBackend for RealBackend {
     }
     fn print_locking_features(&self, f: u16) {
         opal::print_locking_features(f)
+    }
+    fn take_ownership_device(&self, dev: &str, new_pw: &str) -> Result<()> {
+        opal::take_ownership(dev, new_pw)
+    }
+    fn activate_lsp_device(&self, dev: &str, sid_pw: &str) -> Result<()> {
+        opal::activate_lsp(dev, sid_pw)
+    }
+    fn lr_setup_device(&self, dev: &str, admin1_pw: &str) -> Result<()> {
+        opal::lr_setup(dev, admin1_pw)
     }
 }
 
@@ -115,6 +127,36 @@ impl OpalBackend for BuiltinMockBackend {
     fn print_locking_features(&self, f: u16) {
         println!("[mock] Locking features: 0x{:04x}", f);
     }
+
+    fn take_ownership_device(&self, dev: &str, new_pw: &str) -> Result<()> {
+        if !dev.starts_with("/dev/nvme") {
+            return Err(anyhow!("invalid device"));
+        }
+        if new_pw.is_empty() {
+            return Err(anyhow!("empty password"));
+        }
+        Ok(())
+    }
+
+    fn activate_lsp_device(&self, dev: &str, sid_pw: &str) -> Result<()> {
+        if !dev.starts_with("/dev/nvme") {
+            return Err(anyhow!("invalid device"));
+        }
+        if sid_pw.is_empty() {
+            return Err(anyhow!("empty password"));
+        }
+        Ok(())
+    }
+
+    fn lr_setup_device(&self, dev: &str, admin1_pw: &str) -> Result<()> {
+        if !dev.starts_with("/dev/nvme") {
+            return Err(anyhow!("invalid device"));
+        }
+        if admin1_pw.is_empty() {
+            return Err(anyhow!("empty password"));
+        }
+        Ok(())
+    }
 }
 
 //
@@ -175,4 +217,28 @@ pub fn do_status(device: String) -> Result<()> {
         if locked { "LOCKED" } else { "UNLOCKED" }
     );
     Ok(())
+}
+
+pub fn do_initialize(device: String, key_arg: Option<String>) -> Result<()> {
+    let key = read_key_arg(key_arg)?;
+    if !backend().is_opal_device(&device)? {
+        return Err(anyhow!("{device} does not support OPAL locking"));
+    }
+    backend().take_ownership_device(&device, &key)
+}
+
+pub fn do_activate(device: String, key_arg: Option<String>) -> Result<()> {
+    let key = read_key_arg(key_arg)?;
+    if !backend().is_opal_device(&device)? {
+        return Err(anyhow!("{device} does not support OPAL locking"));
+    }
+    backend().activate_lsp_device(&device, &key)
+}
+
+pub fn do_lr_setup(device: String, key_arg: Option<String>) -> Result<()> {
+    let key = read_key_arg(key_arg)?;
+    if !backend().is_opal_device(&device)? {
+        return Err(anyhow!("{device} does not support OPAL locking"));
+    }
+    backend().lr_setup_device(&device, &key)
 }
