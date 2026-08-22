@@ -254,7 +254,6 @@ fn do_lock(dev: &str, password: &str, state: OpalLockState) -> Result<()> {
 
     // Execute ioctl while file descriptor is valid
     let res = unsafe { ioc_opal_lock_unlock(fd, &op) }
-        .map(|_| ())
         .map_err(|e| {
             anyhow!(
                 "OPAL_LOCK_UNLOCK ioctl failed on {} (state={:?}): {:?}",
@@ -262,11 +261,11 @@ fn do_lock(dev: &str, password: &str, state: OpalLockState) -> Result<()> {
                 state as u32,
                 e
             )
-        });
+        })
+        .and_then(|rc| check_opal_rc(rc, "OPAL_LOCK_UNLOCK"));
 
     // Scrub key material before returning
     op.session.opal_key.key[..op.session.opal_key.key_len as usize].zeroize();
-
     res
 }
 
