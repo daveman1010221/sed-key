@@ -52,4 +52,24 @@ pub enum Command {
         /// Admin1 password: file path, '-' for stdin, or literal string; if omitted, use env
         key: Option<String>,
     },
+        /// DESTRUCTIVE: revert the drive to factory state using the SID password. Wipes all data.
+    Revert {
+        /// Device path
+        device: String,
+        /// SID key: file path, '-' for stdin, or literal string; if omitted, use env
+        key: Option<String>,
+        /// Required to actually perform this destructive operation
+        #[arg(long)]
+        yes: bool,
+    },
+    /// DESTRUCTIVE: revert the drive to factory state using the PSID (from the drive label). Wipes all data.
+    PsidRevert {
+        /// Device path
+        device: String,
+        /// PSID: file path, '-' for stdin, or literal string; if omitted, use env
+        key: Option<String>,
+        /// Required to actually perform this destructive operation
+        #[arg(long)]
+        yes: bool,
+    },
 }

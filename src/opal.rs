@@ -1,7 +1,8 @@
 use crate::ioctl::{
     OPAL_KEY_MAX, OpalLockState, OpalUser, ioc_opal_activate_lsp, ioc_opal_lock_unlock,
-    ioc_opal_take_ownership, opal_discovery, opal_key, opal_lock_unlock, opal_lr_act,
-    opal_session_info, ioc_opal_lr_setup, opal_user_lr_setup,
+    ioc_opal_lr_setup, ioc_opal_psid_revert_tpr, ioc_opal_revert_tpr, ioc_opal_take_ownership,
+    opal_discovery, opal_key, opal_lock_unlock, opal_lr_act, opal_session_info,
+    opal_user_lr_setup,
 };
 use anyhow::{Result, anyhow};
 use nix::errno::Errno;
@@ -406,6 +407,96 @@ fn do_lr_setup(dev: &str, admin1_password: &str) -> Result<()> {
 
 pub fn lr_setup(dev: &str, admin1_password: &str) -> Result<()> {
     do_lr_setup(dev, admin1_password)
+}
+
+/// Revert the entire TPer to factory state, authenticated as SID (the
+/// owner credential set during initialize).
+///
+/// DESTRUCTIVE: regenerates the media encryption key, irreversibly wiping
+/// all data on the drive.
+fn do_revert(dev: &str, sid_password: &str) -> Result<()> {
+    if sid_password.is_empty() {
+        return Err(anyhow!("empty password"));
+    }
+    let max = OPAL_KEY_MAX as usize;
+    if sid_password.len() > max {
+        return Err(anyhow!(
+            "password length ({}) exceeds OPAL_KEY_MAX ({}) — refusing to truncate",
+            sid_password.len(),
+            max
+        ));
+    }
+
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("failed to open {}: {}", dev, e))?;
+    let fd = file.as_raw_fd();
+
+    let mut key: opal_key = OpalKeyFixed::default()
+        .with_key_type(OPAL_INCLUDED)
+        .with_lr(0)
+        .with_password(sid_password.as_bytes())
+        .into();
+
+    let res = unsafe { ioc_opal_revert_tpr(fd, &key) }
+        .map_err(|e| map_ioctl_err(e, "OPAL_REVERT_TPR"))
+        .and_then(|rc| check_opal_rc(rc, "OPAL_REVERT_TPR"));
+
+    key.key[..key.key_len as usize].zeroize();
+    res
+}
+
+/// Revert the entire TPer to factory state, authenticated as PSID (the
+/// value printed on the physical drive label).
+///
+/// DESTRUCTIVE: regenerates the media encryption key, irreversibly wiping
+/// all data. This is the recovery path when the SID is lost or the drive
+/// is in an unauthenticatable state. The PSID is NOT run through
+/// validate_sid — it is not subject to the SID charset/length policy.
+fn do_psid_revert(dev: &str, psid: &str) -> Result<()> {
+    if psid.is_empty() {
+        return Err(anyhow!("empty PSID"));
+    }
+    let max = OPAL_KEY_MAX as usize;
+    if psid.len() > max {
+        return Err(anyhow!(
+            "PSID length ({}) exceeds OPAL_KEY_MAX ({})",
+            psid.len(),
+            max
+        ));
+    }
+
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(dev)
+        .map_err(|e| anyhow!("failed to open {}: {}", dev, e))?;
+    let fd = file.as_raw_fd();
+
+    let mut key: opal_key = OpalKeyFixed::default()
+        .with_key_type(OPAL_INCLUDED)
+        .with_lr(0)
+        .with_password(psid.as_bytes())
+        .into();
+
+    let res = unsafe { ioc_opal_psid_revert_tpr(fd, &key) }
+        .map_err(|e| map_ioctl_err(e, "OPAL_PSID_REVERT_TPR"))
+        .and_then(|rc| check_opal_rc(rc, "OPAL_PSID_REVERT_TPR"));
+
+    key.key[..key.key_len as usize].zeroize();
+    res
+}
+
+/// Public wrapper: SID-authenticated destructive revert.
+pub fn revert_device(dev: &str, sid_password: &str) -> Result<()> {
+    do_revert(dev, sid_password)
+}
+
+/// Public wrapper: PSID-authenticated destructive revert.
+pub fn psid_revert_device(dev: &str, psid: &str) -> Result<()> {
+    do_psid_revert(dev, psid)
 }
 
 /// Verifies the device is actually unlocked afterward.

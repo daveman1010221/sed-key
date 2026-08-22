@@ -22,7 +22,7 @@ mod args;
 use anyhow::Result;
 use args::{Cli, Command};
 use clap::{CommandFactory, Parser};
-use sed_key::{do_activate, do_initialize, do_lock, do_lr_setup, do_status, do_unlock};
+use sed_key::{do_activate, do_initialize, do_lock, do_lr_setup, do_psid_revert, do_revert, do_status, do_unlock};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -50,6 +50,12 @@ fn main() -> Result<()> {
         }
         Command::LrSetup { device, key } => {
             do_lr_setup(device, key)?;
+        }
+        Command::Revert { device, key, yes } => {
+            do_revert(device, key, yes)?;
+        }
+        Command::PsidRevert { device, key, yes } => {
+            do_psid_revert(device, key, yes)?;
         }
     }
     Ok(())

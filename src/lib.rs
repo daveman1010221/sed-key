@@ -27,6 +27,8 @@ trait OpalBackend: Sync {
     fn take_ownership_device(&self, dev: &str, new_pw: &str) -> Result<()>;
     fn activate_lsp_device(&self, dev: &str, sid_pw: &str) -> Result<()>;
     fn lr_setup_device(&self, dev: &str, admin1_pw: &str) -> Result<()>;
+    fn revert_device(&self, dev: &str, pw: &str) -> Result<()>;
+    fn psid_revert_device(&self, dev: &str, psid: &str) -> Result<()>;
 }
 
 struct RealBackend;
@@ -58,6 +60,12 @@ impl OpalBackend for RealBackend {
     }
     fn lr_setup_device(&self, dev: &str, admin1_pw: &str) -> Result<()> {
         opal::lr_setup(dev, admin1_pw)
+    }
+    fn revert_device(&self, dev: &str, pw: &str) -> Result<()> {
+        opal::revert_device(dev, pw)
+    }
+    fn psid_revert_device(&self, dev: &str, psid: &str) -> Result<()> {
+        opal::psid_revert_device(dev, psid)
     }
 }
 
@@ -157,6 +165,26 @@ impl OpalBackend for BuiltinMockBackend {
         }
         Ok(())
     }
+
+    fn revert_device(&self, dev: &str, pw: &str) -> Result<()> {
+        if !dev.starts_with("/dev/nvme") {
+            return Err(anyhow!("invalid device"));
+        }
+        if pw.is_empty() {
+            return Err(anyhow!("empty password"));
+        }
+        Ok(())
+    }
+
+    fn psid_revert_device(&self, dev: &str, psid: &str) -> Result<()> {
+        if !dev.starts_with("/dev/nvme") {
+            return Err(anyhow!("invalid device"));
+        }
+        if psid.is_empty() {
+            return Err(anyhow!("empty PSID"));
+        }
+        Ok(())
+    }
 }
 
 //
@@ -241,4 +269,31 @@ pub fn do_lr_setup(device: String, key_arg: Option<String>) -> Result<()> {
         return Err(anyhow!("{device} does not support OPAL locking"));
     }
     backend().lr_setup_device(&device, &key)
+}
+
+pub fn do_revert(device: String, key_arg: Option<String>, yes: bool) -> Result<()> {
+    if !yes {
+        return Err(anyhow!(
+            "refusing to revert {device} without --yes (this DESTROYS all data on the drive)"
+        ));
+    }
+    let key = read_key_arg(key_arg)?;
+    if !backend().is_opal_device(&device)? {
+        return Err(anyhow!("{device} does not support OPAL locking"));
+    }
+    backend().revert_device(&device, &key)
+}
+
+pub fn do_psid_revert(device: String, key_arg: Option<String>, yes: bool) -> Result<()> {
+    if !yes {
+        return Err(anyhow!(
+            "refusing to PSID-revert {device} without --yes (this DESTROYS all data on the drive)"
+        ));
+    }
+    let key = read_key_arg(key_arg)?;
+    // Deliberately NOT gating on is_opal_device: PSID revert is the
+    // bad-state recovery path, and the discovery precheck can fail on
+    // exactly the drives that most need reverting. Let the ioctl itself
+    // be the authority on whether the drive can honor the request.
+    backend().psid_revert_device(&device, &key)
 }
